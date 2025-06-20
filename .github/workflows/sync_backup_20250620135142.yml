@@ -1,0 +1,142 @@
+name: Sync và lưu config
+
+on:
+  schedule:
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-replace:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_URL: https://github.com/XronTrix10/Telegram-Leecher
+      SOURCE_BRANCH_MANUAL: "" # để trống sẽ tự động chọn main/master
+      BACKUP_PATHS: |
+        .github/workflows/delete.yml
+        .github/workflows/sync.yml
+        .github/workflows/sync-old.yml
+        .github/workflows/sync-gitlab-old.yml
+        .github/workflows/sync-gitlab.yml
+      # Quy tắc thay thế 1: Chỉ thay thế nếu dòng khớp toàn bộ
+      REPLACE_RULES_1: |
+        # requirements.txt|pyrofork|pyrofork==2.2.11
+      # Quy tắc thay thế 2: Thay thế mọi chỗ xuất hiện của từ khóa (khớp từ trong dòng)
+      REPLACE_RULES_2: |
+        # README.md|aria|a ria     
+
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Thiết lập thông tin Git user
+        run: |
+          git config user.name "tuthanika-bot"
+          git config user.email "tuthanika@gmail.com"
+
+      - name: Lưu danh sách backup vào file
+        run: |
+          echo "${BACKUP_PATHS}" | tr -d '\r' | sed '/^\s*$/d' > /tmp/backup_paths.txt
+
+      - name: Backup file & folder đã khai báo
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob globstar
+          mkdir -p /tmp/backup
+          while IFS= read -r path || [[ -n "$path" ]]; do
+            for src in $path; do
+              if [ -e "$src" ]; then
+                dest="/tmp/backup/$src"
+                mkdir -p "$(dirname "$dest")"
+                cp -a "$src" "$dest"
+              fi
+            done
+          done < /tmp/backup_paths.txt
+          shopt -u nullglob globstar
+
+      - name: Sync code từ upstream (reset cứng, giống hệt upstream)
+        run: |
+          set -e
+          if [ -n "$SOURCE_BRANCH_MANUAL" ]; then
+            SELECTED_BRANCH="$SOURCE_BRANCH_MANUAL"
+            echo "Đã chọn branch nguồn thủ công: $SELECTED_BRANCH"
+          else
+            PREFER_BRANCHES="main master"
+            git ls-remote --heads $UPSTREAM_URL > /tmp/upstream_branches.txt
+            branch_found=()
+            for branch in $PREFER_BRANCHES; do
+              if grep -q "refs/heads/$branch" /tmp/upstream_branches.txt; then
+                branch_found+=("$branch")
+              fi
+            done
+            if [ "${#branch_found[@]}" -eq 0 ]; then
+              echo "::error::Không tìm thấy branch main hoặc master ở repo upstream!"
+              exit 1
+            elif [ "${#branch_found[@]}" -eq 2 ]; then
+              echo "::error::Repo upstream có cả 2 branch main và master, không thực hiện để tránh nhầm lẫn!"
+              exit 1
+            else
+              SELECTED_BRANCH="${branch_found[0]}"
+              echo "Đã chọn branch nguồn tự động: $SELECTED_BRANCH"
+            fi
+          fi
+          git remote add upstream $UPSTREAM_URL || true
+          git fetch upstream
+          git reset --hard upstream/$SELECTED_BRANCH
+
+      - name: Thay thế từ khoá đúng-đủ (REPLACE_RULES_1 chỉ thay nếu khớp toàn bộ dòng)
+        run: |
+          set -euxo pipefail
+          echo "${REPLACE_RULES_1}" | while IFS='|' read -r filepath from to; do
+            [ -z "$filepath" ] && continue
+            [ ! -f "$filepath" ] && continue
+            if [ -z "$to" ]; then
+              sed -i "/^$from$/d" "$filepath"
+            else
+              sed -i "s|^$from\$|$to|g" "$filepath"
+            fi
+          done
+
+      - name: Thay thế từ khoá khớp từ (REPLACE_RULES_2 thay mọi chỗ xuất hiện)
+        run: |
+          set -euxo pipefail
+          echo "${REPLACE_RULES_2}" | while IFS='|' read -r filepath from to; do
+            [ -z "$filepath" ] && continue
+            [ ! -f "$filepath" ] && continue
+            if [ -z "$to" ]; then
+              sed -i "s|$from||gI" "$filepath"
+            else
+              sed -i "s|$from|$to|gI" "$filepath"
+            fi
+          done
+
+      - name: Restore file & folder đã backup về đúng vị trí cũ
+        run: |
+          set -euxo pipefail
+          cd /tmp/backup
+          find . -type f -o -type d | tail -n +2 | while read path; do
+            target="${path#./}"
+            if [ -f "$path" ]; then
+              mkdir -p "$(dirname "$GITHUB_WORKSPACE/$target")"
+              cp -a "$path" "$GITHUB_WORKSPACE/$target"
+            fi
+            if [ -d "$path" ] && [ -z "$(ls -A "$path")" ]; then
+              mkdir -p "$GITHUB_WORKSPACE/$target"
+            fi
+          done
+
+      - name: Commit & push lên branch hiện tại nếu có thay đổi
+        run: |
+          git add .
+          git_branch=$(git rev-parse --abbrev-ref HEAD)
+          git diff --cached --exit-code || (git commit -m "Sync upstream và thay thế keyword chính xác/khớp từ" && git push --force origin "$git_branch")
+
+      - name: Delete workflow runs cũ (nếu cần)
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 1
+          keep_minimum_runs: 1

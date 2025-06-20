@@ -5,37 +5,196 @@ on:
     - cron: '0 14 * * *'
   workflow_dispatch:
 
-jobs:
-  sync-and-replace:
-    runs-on: ubuntu-latest
-    env:
-      UPSTREAM_URL: https://github.com/XronTrix10/Telegram-Leecher
-      SOURCE_BRANCH_MANUAL: "" # để trống sẽ tự động chọn main/master
-      BACKUP_PATHS: |
-        .github/workflows/delete.yml
-        .github/workflows/sync.yml
-        .github/workflows/sync-old.yml
-        .github/workflows/sync-gitlab-old.yml
-        .github/workflows/sync-gitlab.yml
-      # Quy tắc thay thế 1: Chỉ thay thế nếu dòng khớp toàn bộ
-      REPLACE_RULES_1: |
-        # requirements.txt|pyrofork|pyrofork==2.2.11
-      # Quy tắc thay thế 2: Thay thế mọi chỗ xuất hiện của từ khóa (khớp từ trong dòng)
-      REPLACE_RULES_2: |
-        # README.md|aria|a ria     
+env:
+  UPSTREAM_URL: https://github.com/XronTrix10/Telegram-Leecher
+  SOURCE_BRANCH_MANUAL: ""
+  BACKUP_BRANCH: "backup-tuthanika"
+  BACKUP_AUTHOR: "tuthanika"
+  BACKUP_PATHS: |
+    .github/workflows/delete.yml
+    .github/workflows/sync.yml
+    .github/workflows/sync-old.yml
+    .github/workflows/sync-gitlab-old.yml
+    .github/workflows/sync-gitlab.yml
 
+  REPLACE_RULES_1: |
+    # .gitignore|config.env|
+  REPLACE_RULES_2: |
+    # README.md|aria|a ria
+
+jobs:
+  sync-all:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout target repo
+      - name: Checkout full repo (main branch hoặc theo SOURCE_BRANCH_MANUAL)
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT }}
           fetch-depth: 0
 
-      - name: Thiết lập thông tin Git user
+      - name: Thiết lập thông tin Git user (bắt buộc cho mọi commit)
         run: |
           git config user.name "tuthanika-bot"
           git config user.email "tuthanika@gmail.com"
 
+      - name: Xác định branch chính sử dụng cho backup
+        id: branchinfo
+        run: |
+          SELECTED_BRANCH="${SOURCE_BRANCH_MANUAL}"
+          if [ -z "$SELECTED_BRANCH" ]; then
+            for b in main master; do
+              if git ls-remote --exit-code --heads origin $b; then
+                SELECTED_BRANCH="$b"
+                break
+              fi
+            done
+          fi
+          if [ -z "$SELECTED_BRANCH" ]; then
+            echo "Không tìm thấy branch main hoặc master!"
+            exit 1
+          fi
+          echo "branch=$SELECTED_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Chuẩn bị branch backup trong worktree riêng (độc lập workspace)
+        run: |
+          set -euxo pipefail
+          git fetch origin "${BACKUP_BRANCH}" || true
+          rm -rf /tmp/backup-repo || true
+          if git ls-remote --exit-code --heads origin ${BACKUP_BRANCH}; then
+            git worktree add /tmp/backup-repo origin/${BACKUP_BRANCH}
+          else
+            git worktree add /tmp/backup-repo
+            cd /tmp/backup-repo
+            git checkout --orphan ${BACKUP_BRANCH}
+            git rm -rf . || true
+            git clean -fdx
+            git config user.name "tuthanika-bot"
+            git config user.email "tuthanika@gmail.com"
+            git commit --allow-empty -m "Init backup branch"
+            git push origin HEAD:refs/heads/${BACKUP_BRANCH}
+            cd -
+          fi
+
+      - name: Lấy danh sách commit của user đã backup (lưu commit hash vào file)
+        run: |
+          cd /tmp/backup-repo
+          git log --pretty=format:"%H" > /tmp/backup_branch_commits.txt
+
+      - name: Checkout lại branch chính để chuẩn bị backup commit mới
+        run: |
+          git checkout "${{ steps.branchinfo.outputs.branch }}"
+
+      - name: Lấy danh sách commit mới của user trên branch chính (chưa có trong branch backup)
+        run: |
+          git log --author="${BACKUP_AUTHOR}" --pretty=format:"%H" | grep -Fxv -f /tmp/backup_branch_commits.txt > /tmp/to_backup.txt || true
+
+      - name: Backup từng commit mới vào branch backup (chuẩn theo logic bạn yêu cầu)
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -euxo pipefail
+          [ -s /tmp/to_backup.txt ] || { echo "Không có commit mới để backup"; exit 0; }
+
+          cd /tmp/backup-repo
+
+          merge_or_create_file() {
+            file="$1"
+            commit="$2"
+
+            # Lấy nội dung file mới từ commit cần backup
+            git -C "$GITHUB_WORKSPACE" show "${commit}:${file}" > file.new || return 1
+
+            # Nếu file chưa tồn tại ở backup: add luôn
+            if [ ! -f "$file" ]; then
+              mv file.new "$file"
+              git add "$file"
+              echo "Add file mới $file"
+              return 0
+            fi
+
+            # Nếu giống hệt thì bỏ qua
+            if cmp -s "$file" file.new; then
+              rm file.new
+              echo "Trùng nội dung $file, bỏ qua."
+              return 1
+            fi
+
+            # Thử merge 3-way: base là file backup cũ, local là file backup cũ, remote là file mới
+            cp "$file" file.base
+            if git merge-file -p "$file" file.base file.new > file.merge 2>/dev/null; then
+              if grep -q '<<<<<<<' file.merge; then
+                # Có xung đột: đổi tên file backup cũ, file mới giữ tên gốc
+                ext=""
+                base="$file"
+                if [[ "$file" == *.* ]]; then
+                  base="${file%.*}"
+                  ext=".${file##*.}"
+                fi
+                oldfile="${base}_backup_$(date +'%Y%m%d%H%M%S')${ext}"
+                mv "$file" "$oldfile"
+                git add "$oldfile"
+                mv file.new "$file"
+                git add "$file"
+                echo "Xung đột, đổi tên file cũ thành $oldfile, file mới giữ tên $file"
+                rm -f file.base file.merge
+                return 0
+              else
+                # Merge thành công, cập nhật file
+                mv file.merge "$file"
+                git add "$file"
+                echo "Merge thành công file $file"
+                rm -f file.base file.new
+                return 0
+              fi
+            else
+              # Merge lỗi, cũng đổi tên file cũ và add file mới
+              ext=""
+              base="$file"
+              if [[ "$file" == *.* ]]; then
+                base="${file%.*}"
+                ext=".${file##*.}"
+              fi
+              oldfile="${base}_backup_$(date +'%Y%m%d%H%M%S')${ext}"
+              mv "$file" "$oldfile"
+              git add "$oldfile"
+              mv file.new "$file"
+              git add "$file"
+              echo "Merge lỗi, đổi tên file cũ thành $oldfile, file mới giữ tên $file"
+              rm -f file.base file.merge
+              return 0
+            fi
+          }
+
+          while IFS= read -r commit; do
+            AUTHOR_NAME=$(git -C "$GITHUB_WORKSPACE" show -s --format='%an' $commit)
+            AUTHOR_EMAIL=$(git -C "$GITHUB_WORKSPACE" show -s --format='%ae' $commit)
+            AUTHOR_DATE=$(git -C "$GITHUB_WORKSPACE" show -s --format='%ad' --date=iso-strict $commit)
+            COMMIT_MSG=$(git -C "$GITHUB_WORKSPACE" show -s --format='%s' $commit)
+            changed_any=0
+
+            mapfile -t changed_files < <(git -C "$GITHUB_WORKSPACE" diff-tree --no-commit-id --name-only -r $commit)
+            for file in "${changed_files[@]}"; do
+              mkdir -p "$(dirname "$file")"
+              if git -C "$GITHUB_WORKSPACE" cat-file -e "${commit}:${file}" 2>/dev/null; then
+                if merge_or_create_file "$file" "$commit"; then
+                  changed_any=1
+                fi
+              fi
+            done
+
+            if [ "$changed_any" = "1" ]; then
+              export GIT_COMMITTER_NAME="$AUTHOR_NAME"
+              export GIT_COMMITTER_EMAIL="$AUTHOR_EMAIL"
+              export GIT_COMMITTER_DATE="$AUTHOR_DATE"
+              git commit --author="$AUTHOR_NAME <$AUTHOR_EMAIL>" --date="$AUTHOR_DATE" -m "$COMMIT_MSG" || true
+            else
+              echo "Không có file mới nào cần commit cho commit $commit"
+            fi
+          done < <(tac /tmp/to_backup.txt)
+
+          git push origin HEAD:refs/heads/${BACKUP_BRANCH}
+
+      # ========== SYNC AND REPLACE ==========
       - name: Lưu danh sách backup vào file
         run: |
           echo "${BACKUP_PATHS}" | tr -d '\r' | sed '/^\s*$/d' > /tmp/backup_paths.txt
@@ -56,32 +215,28 @@ jobs:
           done < /tmp/backup_paths.txt
           shopt -u nullglob globstar
 
+      - name: Xác định branch chính sử dụng cho sync
+        id: branchinfo2
+        run: |
+          SELECTED_BRANCH="${SOURCE_BRANCH_MANUAL}"
+          if [ -z "$SELECTED_BRANCH" ]; then
+            for b in main master; do
+              if git ls-remote --exit-code --heads origin $b; then
+                SELECTED_BRANCH="$b"
+                break
+              fi
+            done
+          fi
+          if [ -z "$SELECTED_BRANCH" ]; then
+            echo "Không tìm thấy branch main hoặc master!"
+            exit 1
+          fi
+          echo "branch=$SELECTED_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Sync code từ upstream (reset cứng, giống hệt upstream)
         run: |
           set -e
-          if [ -n "$SOURCE_BRANCH_MANUAL" ]; then
-            SELECTED_BRANCH="$SOURCE_BRANCH_MANUAL"
-            echo "Đã chọn branch nguồn thủ công: $SELECTED_BRANCH"
-          else
-            PREFER_BRANCHES="main master"
-            git ls-remote --heads $UPSTREAM_URL > /tmp/upstream_branches.txt
-            branch_found=()
-            for branch in $PREFER_BRANCHES; do
-              if grep -q "refs/heads/$branch" /tmp/upstream_branches.txt; then
-                branch_found+=("$branch")
-              fi
-            done
-            if [ "${#branch_found[@]}" -eq 0 ]; then
-              echo "::error::Không tìm thấy branch main hoặc master ở repo upstream!"
-              exit 1
-            elif [ "${#branch_found[@]}" -eq 2 ]; then
-              echo "::error::Repo upstream có cả 2 branch main và master, không thực hiện để tránh nhầm lẫn!"
-              exit 1
-            else
-              SELECTED_BRANCH="${branch_found[0]}"
-              echo "Đã chọn branch nguồn tự động: $SELECTED_BRANCH"
-            fi
-          fi
+          SELECTED_BRANCH="${{ steps.branchinfo2.outputs.branch }}"
           git remote add upstream $UPSTREAM_URL || true
           git fetch upstream
           git reset --hard upstream/$SELECTED_BRANCH
