@@ -123,6 +123,9 @@ async def taskScheduler():
 
     src_text.append(Messages.dump_task)
 
+    # Không đụng tới WORK_PATH
+    if ospath.exists(Paths.down_path):
+        shutil.rmtree(Paths.down_path)
     if ospath.exists(Paths.WORK_PATH):
         shutil.rmtree(Paths.WORK_PATH)
         # makedirs(Paths.WORK_PATH)
