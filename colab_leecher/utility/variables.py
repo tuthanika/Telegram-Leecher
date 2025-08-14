@@ -105,7 +105,7 @@ class MSG:
 
 class Aria2c:
     link_info = False
-    pic_dwn_url = "https://picsum.photos/900/600"
+    pic_dwn_url = "https://random-image-pepebigotes.vercel.app/api/random-image"
 
 
 class Gdrive:
