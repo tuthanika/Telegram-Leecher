@@ -140,10 +140,12 @@ async def taskScheduler():
     if is_rclone_mount(Paths.down_path):
         logging.info(f"Skipping deletion and creation of rclone mount path: {Paths.down_path}")
     else:
-        if ospath.exists(Paths.down_path):
+        if not ospath.exists(Paths.down_path):
+            makedirs(Paths.down_path)
+        else:
             shutil.rmtree(Paths.down_path)
-        makedirs(Paths.down_path)
-    
+            makedirs(Paths.down_path)
+
     Messages.link_p = str(DUMP_ID)[4:]
 
     try:
