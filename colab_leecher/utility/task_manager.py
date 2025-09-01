@@ -43,9 +43,11 @@ from colab_leecher.utility.variables import (
 
 def is_rclone_mount(path: str) -> bool:
     try:
-        return os.path.ismount(path)
+        result = os.path.ismount(path)
+        logging.info(f"[Mount Check] Path: {path} | ismount: {result}")
+        return result
     except Exception as e:
-        print(f"Mount check failed for {path}: {e}")
+        logging.warning(f"Mount check failed for {path}: {e}")
         return False
         
 async def task_starter(message, text):
@@ -131,17 +133,27 @@ async def taskScheduler():
     src_text.append(Messages.dump_task)
 
     if ospath.exists(Paths.WORK_PATH):
+        logging.info(f"[WORK_PATH] Exists: {Paths.WORK_PATH} → Deleting")
         shutil.rmtree(Paths.WORK_PATH)
+    else:
+        logging.info(f"[WORK_PATH] Does not exist: {Paths.WORK_PATH}")
     makedirs(Paths.WORK_PATH, exist_ok=True)
+    logging.info(f"[WORK_PATH] Created: {Paths.WORK_PATH}")
 
+    # Kiểm tra mount
     if is_rclone_mount(Paths.down_path):
-        logging.info(f"Skipping deletion and creation of rclone mount path: {Paths.down_path}")
+        logging.info(f"[DOWN_PATH] Detected mount → Skipping deletion: {Paths.down_path}")
     else:
         if not ospath.exists(Paths.down_path):
+            logging.info(f"[DOWN_PATH] Does not exist → Creating: {Paths.down_path}")
             makedirs(Paths.down_path)
         else:
+            logging.info(f"[DOWN_PATH] Exists and NOT mount → Deleting: {Paths.down_path}")
             shutil.rmtree(Paths.down_path)
+            logging.info(f"[DOWN_PATH] Recreating: {Paths.down_path}")
             makedirs(Paths.down_path)
+
+    logging.info(f"[Final] link_p = {str(DUMP_ID)[4:]}")
 
     Messages.link_p = str(DUMP_ID)[4:]
 
