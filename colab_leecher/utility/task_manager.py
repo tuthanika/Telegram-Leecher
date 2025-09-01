@@ -41,16 +41,9 @@ from colab_leecher.utility.variables import (
     TaskError,
 )
 
-def is_mount(path):
-    try:
-        output = subprocess.check_output(['mount']).decode()
-        for line in output.splitlines():
-            if f' {path} ' in line or line.strip().endswith(path):
-                return True
-        return False
-    except Exception as e:
-        print(f"Mount check failed: {e}")
-        return False
+def is_rclone_mount(path):
+    # Kiểm tra nếu path chứa "mount", giả định là điểm mount rclone
+    return "/mount/" in path or path.startswith("/content/mount")
 
 async def task_starter(message, text):
     global BOT
@@ -135,10 +128,10 @@ async def taskScheduler():
     src_text.append(Messages.dump_task)
 
     # Không đụng tới WORK_PATH
-    if ospath.exists(Paths.down_path) and not is_mount(Paths.down_path):
+    if ospath.exists(Paths.down_path) and not is_rclone_mount(Paths.down_path):
         shutil.rmtree(Paths.down_path)
     else:
-        print(f"Skipping deletion of mount path: {Paths.down_path}")
+        print(f"Skipping deletion of rclone mount path: {Paths.down_path}")
     if ospath.exists(Paths.WORK_PATH):
         shutil.rmtree(Paths.WORK_PATH)
         # makedirs(Paths.WORK_PATH)
