@@ -40,7 +40,16 @@ from colab_leecher.utility.variables import (
     TaskError,
 )
 
-
+def is_rclone_mount(path: str) -> bool:
+    try:
+        # Kiểm tra nếu path là mount bằng cách so sánh device ID
+        stat_info = os.stat(path)
+        parent_stat = os.stat(os.path.dirname(path))
+        return stat_info.st_dev != parent_stat.st_dev
+    except Exception as e:
+        logging.warning(f"Mount check failed for {path}: {e}")
+        return False
+        
 async def task_starter(message, text):
     global BOT
     await message.delete()
@@ -123,16 +132,16 @@ async def taskScheduler():
 
     src_text.append(Messages.dump_task)
 
-    # Không đụng tới WORK_PATH
-    if ospath.exists(Paths.down_path):
-        shutil.rmtree(Paths.down_path)
     if ospath.exists(Paths.WORK_PATH):
         shutil.rmtree(Paths.WORK_PATH)
-        # makedirs(Paths.WORK_PATH)
+    if not is_rclone_mount(Paths.down_path):
+        if ospath.exists(Paths.down_path):
+            shutil.rmtree(Paths.down_path)
         makedirs(Paths.down_path)
     else:
-        makedirs(Paths.WORK_PATH)
-        makedirs(Paths.down_path)
+        logging.info(f"Skipping creation of rclone mount path: {Paths.down_path}")
+    makedirs(Paths.WORK_PATH)
+
     Messages.link_p = str(DUMP_ID)[4:]
 
     try:
