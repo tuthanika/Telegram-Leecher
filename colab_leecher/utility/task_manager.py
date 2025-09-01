@@ -4,6 +4,7 @@
 import pytz
 import shutil
 import logging
+import os
 from time import time
 from datetime import datetime
 from asyncio import sleep
@@ -140,7 +141,7 @@ async def taskScheduler():
         makedirs(Paths.down_path)
     else:
         logging.info(f"Skipping creation of rclone mount path: {Paths.down_path}")
-    makedirs(Paths.WORK_PATH)
+    makedirs(Paths.WORK_PATH, exist_ok=True)
 
     Messages.link_p = str(DUMP_ID)[4:]
 
