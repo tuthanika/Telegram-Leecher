@@ -91,6 +91,8 @@ async def taskScheduler():
     Messages.status_head = f"<b>📥 DOWNLOADING » </b>\n"
 
     if is_dir:
+        Paths.down_path = BOT.SOURCE[0]
+        logging.info(f"[Assign] down_path set to: {Paths.down_path}")
         if not ospath.exists(BOT.SOURCE[0]):
             TaskError.state = True
             TaskError.text = "Task Failed. Because: Provided Directory Path Not Exists"
