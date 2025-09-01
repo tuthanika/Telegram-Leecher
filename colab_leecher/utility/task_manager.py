@@ -43,12 +43,9 @@ from colab_leecher.utility.variables import (
 
 def is_rclone_mount(path: str) -> bool:
     try:
-        # Kiểm tra nếu path là mount bằng cách so sánh device ID
-        stat_info = os.stat(path)
-        parent_stat = os.stat(os.path.dirname(path))
-        return stat_info.st_dev != parent_stat.st_dev
+        return os.path.ismount(path)
     except Exception as e:
-        logging.warning(f"Mount check failed for {path}: {e}")
+        print(f"Mount check failed for {path}: {e}")
         return False
         
 async def task_starter(message, text):
