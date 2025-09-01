@@ -4,7 +4,6 @@
 import pytz
 import shutil
 import logging
-import os
 from time import time
 from datetime import datetime
 from asyncio import sleep
@@ -40,20 +39,6 @@ from colab_leecher.utility.variables import (
     Transfer,
     TaskError,
 )
-
-def is_rclone_mount(path: str) -> bool:
-    try:
-        current = os.path.abspath(path)
-        while current != "/":
-            if os.path.ismount(current):
-                logging.info(f"[Mount Check] Detected mount at: {current} (from {path})")
-                return True
-            current = os.path.dirname(current)
-        logging.info(f"[Mount Check] No mount detected for: {path}")
-        return False
-    except Exception as e:
-        logging.warning(f"[Mount Check] Failed for {path}: {e}")
-        return False
         
 async def task_starter(message, text):
     global BOT
@@ -96,8 +81,6 @@ async def taskScheduler():
     Messages.status_head = f"<b>📥 DOWNLOADING » </b>\n"
 
     if is_dir:
-        Paths.down_path = BOT.SOURCE[0]
-        logging.info(f"[Assign] down_path set to: {Paths.down_path}")
         if not ospath.exists(BOT.SOURCE[0]):
             TaskError.state = True
             TaskError.text = "Task Failed. Because: Provided Directory Path Not Exists"
@@ -146,19 +129,8 @@ async def taskScheduler():
         logging.info(f"[WORK_PATH] Does not exist: {Paths.WORK_PATH}")
     makedirs(Paths.WORK_PATH, exist_ok=True)
     logging.info(f"[WORK_PATH] Created: {Paths.WORK_PATH}")
-
-    # Kiểm tra mount
-    if is_rclone_mount(Paths.down_path):
-        logging.info(f"[DOWN_PATH] Detected mount → Skipping deletion: {Paths.down_path}")
-    else:
-        if not ospath.exists(Paths.down_path):
-            logging.info(f"[DOWN_PATH] Does not exist → Creating: {Paths.down_path}")
-            makedirs(Paths.down_path)
-        else:
-            logging.info(f"[DOWN_PATH] Exists and NOT mount → Deleting: {Paths.down_path}")
-            shutil.rmtree(Paths.down_path)
-            logging.info(f"[DOWN_PATH] Recreating: {Paths.down_path}")
-            makedirs(Paths.down_path)
+    makedirs(Paths.down_path, exist_ok=True)
+    logging.info(f"[DOWN_PATH] Creating: {Paths.down_path}")
 
     logging.info(f"[Final] link_p = {str(DUMP_ID)[4:]}")
 
