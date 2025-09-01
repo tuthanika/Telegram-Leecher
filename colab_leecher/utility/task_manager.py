@@ -43,11 +43,16 @@ from colab_leecher.utility.variables import (
 
 def is_rclone_mount(path: str) -> bool:
     try:
-        result = os.path.ismount(path)
-        logging.info(f"[Mount Check] Path: {path} | ismount: {result}")
-        return result
+        current = os.path.abspath(path)
+        while current != "/":
+            if os.path.ismount(current):
+                logging.info(f"[Mount Check] Detected mount at: {current} (from {path})")
+                return True
+            current = os.path.dirname(current)
+        logging.info(f"[Mount Check] No mount detected for: {path}")
+        return False
     except Exception as e:
-        logging.warning(f"Mount check failed for {path}: {e}")
+        logging.warning(f"[Mount Check] Failed for {path}: {e}")
         return False
         
 async def task_starter(message, text):
